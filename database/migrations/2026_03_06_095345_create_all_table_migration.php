@@ -20,7 +20,7 @@ return new class extends Migration
             $table->unique(['name', 'location']);
             $table->index('name');
         });
-        
+
         Schema::create('products', function (Blueprint $table) {
             $table->id();
             $table->foreignId('shop_id')->constrained('shops')->onDelete('cascade');
@@ -38,9 +38,8 @@ return new class extends Migration
             $table->id();
             $table->string('key')->unique();
             $table->string('value');
-            $table->timestamps();
         });
-        
+
         Schema::create('orders', function (Blueprint $table) {
             $table->id();
             $table->foreignId('shop_id')->constrained('shops')->onDelete('cascade');
@@ -51,7 +50,7 @@ return new class extends Migration
 
             $table->index('placed_at');
         });
-        
+
         Schema::create('order_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('order_id')->constrained('orders')->onDelete('cascade');
