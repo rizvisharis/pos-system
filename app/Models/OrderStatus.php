@@ -5,12 +5,9 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class Shop extends Model
+class OrderStatus extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'name',
-        'location',
-    ];
+    protected $table = 'order_status';
 }
