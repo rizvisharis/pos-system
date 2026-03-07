@@ -453,6 +453,163 @@ Future improvements could include:
 * rate limiting
 * event-driven inventory updates
 
+# Part3: Architecture & Design for Asynchronous Payments and Refunds
+
+---
+
+## 1. Queue Structure in Laravel
+
+Laravel provides robust queue handling using drivers like Redis, database, SQS, or RabbitMQ. The recommended architecture:
+
+### Dedicated queues per operation type:
+
+* **payments** – handles payment capture/authorization
+* **refunds** – handles refund requests
+* **webhooks** – processes incoming gateway events
+
+### Job classes:
+
+* `ProcessPaymentJob`
+* `ProcessRefundJob`
+* `HandleWebhookJob`
+
+**Example in Laravel:**
+
+```php
+ProcessPaymentJob::dispatch($paymentId)->onQueue('payments');
+ProcessRefundJob::dispatch($refundId)->onQueue('refunds');
+HandleWebhookJob::dispatch($payload)->onQueue('webhooks');
+
+```
+
+### Workers:
+
+Run separate queue workers per queue type for isolation and scaling.
+
+* **Example:** `php artisan queue:work redis --queue=payments,refunds --tries=3`
+
+### Priorities:
+
+Payment jobs > Refund jobs > Webhooks (critical for real-time transaction consistency)
+
+---
+
+## 2. Idempotency Implementation
+
+Idempotency ensures that duplicate requests (from retries or network failures) do not create multiple charges or refunds.
+
+* **Idempotency key:** Unique key per transaction, e.g., `payment_intent_id` from gateway or `order_id` + type.
+* **Storage:** Store keys in database with status: `pending`, `completed`, `failed`.
+* **Check before processing:**
+
+```php
+if (Payment::where('idempotency_key', $key)->exists()) {
+    return; // skip duplicate processing
+}
+
+```
+
+* **Job-level idempotency:** Before executing job logic, validate the idempotency key. Laravel queues support unique jobs via `ShouldBeUnique` in Laravel 10+.
+
+---
+
+## 3. Preventing Duplicate Processing
+
+Use row-level locks or database transactions to ensure data integrity during high-concurrency events.
+
+**Example:**
+
+```php
+DB::transaction(function() use ($paymentId) {
+    $payment = Payment::where('id', $paymentId)->lockForUpdate()->first();
+    if ($payment->status === 'completed') return;
+    
+    // logic to process payment with gateway
+});
+
+```
+
+* **Job deduplication:** Only dispatch a job if the idempotency key does not exist or its status is `pending`.
+
+---
+
+## 4. Webhook Validation Strategy
+
+Verify webhook authenticity using signatures provided by the gateway to prevent spoofing.
+
+**Laravel implementation:**
+
+```php
+if (!hash_equals($signature, hash_hmac('sha256', $payload, config('services.stripe.secret')))) {
+    abort(403, 'Invalid signature');
+}
+
+```
+
+* **Dedicated webhook endpoints:** * `/webhooks/payments`
+* `/webhooks/refunds`
+
+
+* Parse the event, validate the payment or refund, and dispatch relevant jobs for background processing.
+
+---
+
+## 5. Retry Strategy
+
+Configure queue retries to handle transient network issues.
+
+* **Laravel config:** `$tries = 3`, `$backoff = 60`.
+* **Exponential backoff** is recommended for third-party network issues.
+* Idempotency ensures safe retries without creating duplicate charges.
+* **Management:**
+
+```bash
+php artisan queue:failed-table
+php artisan migrate
+php artisan queue:retry all
+
+```
+
+---
+
+## 6. Dead-Letter or Failure Handling
+
+Failed jobs are automatically logged in the `failed_jobs` table for later inspection.
+
+* **Dead-Letter Queue (DLQ):** Jobs exceeding max attempts are moved to a failed queue for manual intervention.
+* **Alerting System:** Configure notifications (Email/SMS/Slack) specifically for failed payments or refunds to alert the dev-ops team immediately.
+
+---
+
+## 7. Database Schema Considerations
+
+### Payment Table
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | bigint | Primary key |
+| `order_id` | bigint | Foreign key to orders |
+| `amount` | decimal | Payment amount |
+| `status` | enum | `pending`, `completed`, `failed` |
+| `idempotency_key` | string | Unique key for retry/deduplication |
+| `payment_gateway_id` | string | Gateway-specific reference |
+| `metadata` | json | Optional details (provider info) |
+| `created_at` | timestamp | Laravel timestamp |
+
+### Refund Table
+
+Similar to the Payment table, including `refund_reason` and `gateway_refund_id`.
+
+---
+
+## 8. Flow Example
+
+1. **Customer places order** → System dispatches `ProcessPaymentJob` with a unique idempotency key.
+2. **Payment gateway** asynchronously confirms the charge → sends a **Webhook** to the server.
+3. **HandleWebhookJob** triggers → validates the signature and updates payment status.
+4. **If job fails** → it retries automatically based on backoff logic → moves to **DLQ** if attempts are exceeded.
+5. **Refund requests** are handled using the same asynchronous pattern for consistency.
+
 ## Author
 
 **Mohamed Rizvi**
