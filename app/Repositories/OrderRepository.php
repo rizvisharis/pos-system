@@ -30,7 +30,7 @@ class OrderRepository extends BaseRepository implements OrderRepositoryInterface
 
     public function findWithItems(int $id): Order
     {
-        return $this->model->with(['shop', 'items', 'items.product', 'status'])->findOrFail($id);
+        return $this->model->with(['shop', 'items', 'items.product', 'status'])->lockForUpdate()->findOrFail($id);
     }
 
     public function updateStatus($id, $status): int

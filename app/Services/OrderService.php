@@ -102,7 +102,8 @@ class OrderService
             }
 
             foreach ($order->items as $item) {
-                $this->productRepository->incrementStock($item->product_id, $item->quantity);
+                $product = $this->productRepository->lockProduct($item->product_id);
+                $this->productRepository->incrementStock($product->id, $item->quantity);
             }
 
             $this->orderRepository->updateStatus($id, 3);
